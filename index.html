@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Audio Maker</title>
+<style>
+:root{color-scheme:light dark;--bg:#f4f0fa;--panel:#fff;--line:#d6cae8;--accent:#7548b4;--text:#1d1528;--muted:#6d6280;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f0b17;--panel:#1a1426;--line:#3a2b50;--accent:#9b6ee0;--text:#f0eafa;--muted:#aaa0b9}}
+:root[data-theme="dark"]{--bg:#0f0b17;--panel:#1a1426;--line:#3a2b50;--accent:#9b6ee0;--text:#f0eafa;--muted:#aaa0b9}
+*{box-sizing:border-box;border-radius:0}
+body{margin:0;min-height:100vh;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;display:flex;justify-content:center;padding:24px 16px}
+main{width:min(460px,100%)}
+h1{font-size:26px;margin:0 0 4px;letter-spacing:.04em}
+.sub{color:var(--muted);font-size:14px;margin:0 0 20px}
+.panel{background:var(--panel);border:1px solid var(--line);padding:18px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
+label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+input,select{width:100%;font:inherit;padding:10px;border:1px solid var(--line);background:var(--bg);color:var(--text)}
+button{width:100%;font:inherit;font-weight:600;padding:14px;border:0;background:var(--accent);color:#fff;cursor:pointer}
+button:disabled{opacity:.5;cursor:wait}
+#status{margin:14px 0 8px;font-size:14px;color:var(--muted);min-height:21px}
+audio{width:100%;margin-top:4px}
+.seed{display:flex;gap:8px;margin-bottom:16px}
+.seed button{width:auto;padding:10px 16px;background:var(--line);color:var(--text)}
+#dl{margin-top:10px;background:var(--line);color:var(--text)}
+</style>
+</head>
+<body><main>
+<h1>Audio Maker</h1>
+<p class="sub">Generate a 30-second procedural track. Every click makes a new one.</p>
+<div class="panel">
+ <div class="row">
+  <div><label for="bpm">BPM</label><input id="bpm" type="number" inputmode="numeric" min="60" max="200" value="96"></div>
+  <div><label for="profile">Style</label>
+   <select id="profile">
+    <option value="temple">Temple</option>
+    <option value="cathedral">Cathedral</option>
+    <option value="arcade">Arcade</option>
+    <option value="cosmic">Cosmic</option>
+    <option value="techno">Techno</option>
+    <option value="synthwave">Synthwave</option>
+    <option value="lofi">Lo-fi</option>
+    <option value="breakbeat">Breakbeat</option>
+   </select></div>
+ </div>
+ <label for="seed">Seed (leave empty for random)</label>
+ <div class="seed"><input id="seed" type="number" inputmode="numeric" min="0" max="999999999" placeholder="Random"><button id="rnd" type="button">Random</button></div>
+ <button id="gen">Generate track</button>
+ <div id="status">Ready.</div>
+ <audio id="player" controls></audio>
+ <button id="dl" disabled>Download WAV</button>
+</div>
+</main>
+<script>
+(() => {
+'use strict';
+const DUR = 30, RATE = 44100, $ = id => document.getElementById(id);
+const player = $('player'), btn = $('gen');
+let url = null, lastBlob = null, lastName = '';
+const scales = {
+  minor: [0,2,3,5,7,8,10], phrygian: [0,1,3,5,7,8,10],
+  dorian: [0,2,3,5,7,9,10], pentatonic: [0,3,5,7,10]
+};
+const progs = [[[0,5,2,6],[0,3,5,6],[0,6,3,5]], [[0,3,5,1],[0,5,3,1],[0,3,6,5]], [[0,3,4,0],[5,3,0,4],[0,4,5,3]]];
+// k/s/h = kick/snare/hat positions in eighth notes (0-7 per bar)
+const P = {
+  temple:   {mode:'minor',wave:'triangle',prog:0,lead:'mix',dur:.14,lg:.045,cg:.02,k:[0],s:[4],h:[]},
+  cathedral:{mode:'phrygian',wave:'triangle',prog:1,lead:'mix',dur:.22,lg:.025,cg:.024,k:[0],s:[4],h:[]},
+  arcade:   {mode:'pentatonic',wave:'square',prog:0,lead:'square',dur:.14,lg:.045,cg:.015,k:[0],s:[4],h:[]},
+  cosmic:   {mode:'dorian',wave:'sine',prog:2,lead:'sine',dur:.25,lg:.045,cg:.02,k:[0],s:[],h:[]},
+  techno:   {mode:'minor',wave:'sawtooth',prog:0,lead:'square',dur:.12,lg:.03,cg:.012,k:[0,2,4,6],s:[],h:[1,3,5,7],pulse:true},
+  synthwave:{mode:'minor',wave:'sawtooth',prog:0,lead:'sawtooth',dur:.12,lg:.03,cg:.016,k:[0,4],s:[2,6],h:[1,3,5,7],arp:true},
+  lofi:     {mode:'dorian',wave:'triangle',prog:0,lead:'sine',dur:.3,lg:.04,cg:.022,k:[0,5],s:[2,6],h:[1,3,5,7],swing:.12,dg:.6},
+  breakbeat:{mode:'phrygian',wave:'square',prog:1,lead:'square',dur:.1,lg:.035,cg:.012,k:[0,5],s:[2,6],h:[0,1,2,3,4,5,6,7]}
+};
+const rnd = s => { let x = s >>> 0; return () => { x = (x + 0x6D2B79F5) >>> 0; let t = x; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; };
+const ri = (r, a, b) => Math.floor(r() * (b - a + 1)) + a;
+const freq = m => 440 * Math.pow(2, (m - 69) / 12);
+
+function tone(ctx, dest, o) {
+  let { t, d, f, w = 'sine', g = .1, p = 0, a = .01, rel = .08, cut = 8000 } = o;
+  if (!(f > 0) || d < .02 || t >= DUR) return;
+  d = Math.min(d, DUR - t);
+  const osc = ctx.createOscillator(), amp = ctx.createGain(), lp = ctx.createBiquadFilter();
+  osc.type = w; osc.frequency.value = f;
+  lp.type = 'lowpass'; lp.frequency.value = cut;
+  a = Math.min(a, d * .4); rel = Math.min(rel, d * .5);
+  amp.gain.setValueAtTime(0, t);
+  amp.gain.linearRampToValueAtTime(g, t + a);
+  amp.gain.setValueAtTime(g, t + d - rel);
+  amp.gain.linearRampToValueAtTime(0, t + d);
+  osc.connect(lp); lp.connect(amp);
+  if (ctx.createStereoPanner) { const pn = ctx.createStereoPanner(); pn.pan.value = p; amp.connect(pn); pn.connect(dest); }
+  else amp.connect(dest);
+  osc.start(t); osc.stop(t + d + .02);
+}
+
+function hit(ctx, dest, r, t, g) {
+  if (t >= DUR) return;
+  const n = Math.floor(RATE * .07), b = ctx.createBuffer(1, n, RATE), a = b.getChannelData(0);
+  for (let i = 0; i < n; i++) a[i] = r() * 2 - 1;
+  const s = ctx.createBufferSource(), f = ctx.createBiquadFilter(), v = ctx.createGain();
+  s.buffer = b; f.type = 'bandpass'; f.frequency.value = 2000 + r() * 3000;
+  v.gain.setValueAtTime(g, t); v.gain.linearRampToValueAtTime(0, t + .07);
+  s.connect(f); f.connect(v); v.connect(dest); s.start(t);
+}
+
+function makeZip(name, data) {
+  const enc = new TextEncoder().encode(name), tbl = [];
+  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; tbl[n] = c >>> 0; }
+  let crc = 0xFFFFFFFF; for (let i = 0; i < data.length; i++) crc = tbl[(crc ^ data[i]) & 255] ^ (crc >>> 8);
+  crc = (crc ^ 0xFFFFFFFF) >>> 0;
+  const n = enc.length, sz = data.length, c0 = 30 + n + sz, e0 = c0 + 46 + n;
+  const out = new Uint8Array(e0 + 22), v = new DataView(out.buffer);
+  v.setUint32(0, 0x04034b50, true); v.setUint16(4, 20, true); v.setUint16(12, 0x21, true);
+  v.setUint32(14, crc, true); v.setUint32(18, sz, true); v.setUint32(22, sz, true); v.setUint16(26, n, true);
+  out.set(enc, 30); out.set(data, 30 + n);
+  v.setUint32(c0, 0x02014b50, true); v.setUint16(c0 + 4, 20, true); v.setUint16(c0 + 6, 20, true); v.setUint16(c0 + 14, 0x21, true);
+  v.setUint32(c0 + 16, crc, true); v.setUint32(c0 + 20, sz, true); v.setUint32(c0 + 24, sz, true); v.setUint16(c0 + 28, n, true);
+  out.set(enc, c0 + 46);
+  v.setUint32(e0, 0x06054b50, true); v.setUint16(e0 + 8, 1, true); v.setUint16(e0 + 10, 1, true);
+  v.setUint32(e0 + 12, 46 + n, true); v.setUint32(e0 + 16, c0, true);
+  return out;
+}
+
+function toWav(buf) {
+  const len = buf.length, size = len * 4, out = new ArrayBuffer(44 + size), v = new DataView(out);
+  const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  str(0, 'RIFF'); v.setUint32(4, 36 + size, true); str(8, 'WAVE'); str(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 2, true);
+  v.setUint32(24, RATE, true); v.setUint32(28, RATE * 4, true); v.setUint16(32, 4, true); v.setUint16(34, 16, true);
+  str(36, 'data'); v.setUint32(40, size, true);
+  const L = buf.getChannelData(0), R = buf.getChannelData(1); let o = 44;
+  for (let i = 0; i < len; i++) for (const x of [L[i], R[i]]) {
+    const s = Math.max(-1, Math.min(1, x)); v.setInt16(o, s < 0 ? s * 32768 : s * 32767, true); o += 2;
+  }
+  return new Blob([out], { type: 'audio/wav' });
+}
+
+async function generate() {
+  btn.disabled = true; $('dl').disabled = true; player.pause();
+  $('status').textContent = 'Generating…';
+  await new Promise(r => setTimeout(r, 30));
+  try {
+    const raw = $('seed').value.trim();
+    const seed = (raw !== '' && isFinite(Number(raw))) ? Math.abs(Math.floor(Number(raw))) % 1000000000 : ri(Math.random, 100000, 999999);
+    const r = rnd(seed);
+    const bpm = Math.max(60, Math.min(200, Number($('bpm').value) || 96));
+    $('bpm').value = bpm;
+    const style = $('profile').value, S = P[style] || P.temple;
+    const scale = scales[S.mode], L = scale.length, root = ri(r, 44, 52);
+    const beat = 60 / bpm, bar = beat * 4, nBars = Math.ceil(DUR / bar), nBeats = Math.ceil(DUR / beat);
+    const Ctx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    const ctx = new Ctx(2, RATE * DUR, RATE);
+    const master = ctx.createGain(); master.gain.value = .8; master.connect(ctx.destination);
+    const pg = progs[S.prog], prog = pg[ri(r, 0, pg.length - 1)];
+    const deg = bi => prog[bi % 4] % L;
+    const chord = d => [0, 2, 4].map(k => { const i = d + k; return root + scale[i % L] + 12 * Math.floor(i / L); });
+    const K = .7, sw = S.swing ? beat * S.swing : 0;
+
+    for (let bi = 0; bi < nBars; bi++) {
+      const t = bi * bar, d = deg(bi), c = chord(d);
+      tone(ctx, master, { t, d: bar * .92, f: freq(root - 12 + scale[d]), g: .12 * K, p: -.1, a: .025, rel: .12, cut: 450 });
+      if (S.pulse) for (let e = 0; e < 8; e++) tone(ctx, master, { t: t + e * beat / 2, d: beat * .4, f: freq(root - 12 + scale[d]), w: 'sawtooth', g: .05 * K, a: .004, rel: .05, cut: 380 });
+      c.forEach((m, j) => tone(ctx, master, { t: t + .015, d: bar * .88, f: freq(m + 12), w: S.wave, g: S.cg * K, p: (j - 1) * .4, a: .18, rel: .22, cut: 3000 }));
+    }
+
+    const motif = Array.from({ length: 8 }, () => scale[ri(r, 0, L - 1)]);
+    for (let bi = 0; bi < nBars; bi++) {
+      const t0 = bi * bar, c = chord(deg(bi));
+      if (S.arp) {
+        for (let s = 0; s < 16; s++) tone(ctx, master, { t: t0 + s * beat / 4, d: .11, f: freq(c[[0,1,2,1][s % 4]] + 12 + (s % 8 > 3 ? 12 : 0)), w: S.lead, g: S.lg * K, p: Math.sin(s * .8) * .5, a: .005, rel: .05, cut: 5000 });
+        continue;
+      }
+      for (const e of [0, 2, 3, 4, 6, 7]) {
+        let m = (e % 2 === 0 && r() > .25) ? c[ri(r, 0, 2)] + 12 : root + 12 + motif[e];
+        if (bi % 4 === 3 && e === 7) m = c[0] + 12;
+        const typ = S.lead === 'mix' ? (r() > .55 ? 'triangle' : 'square') : S.lead;
+        tone(ctx, master, { t: t0 + e * beat / 2 + (e % 2 ? sw : 0), d: S.dur, f: freq(m), w: typ, g: S.lg * K, p: Math.sin((bi * 8 + e) * .7) * .6, a: .008, rel: .05, cut: 6000 });
+      }
+    }
+
+    const dg = S.dg || 1;
+    for (let e = 0; e < nBeats * 2; e++) {
+      const t = e * beat / 2 + (e % 2 ? sw : 0), pos = e % 8;
+      if (S.k.includes(pos)) tone(ctx, master, { t, d: .19, f: freq(29), g: .16 * K * dg, a: .006, rel: .11, cut: 180 });
+      if (S.s.includes(pos)) { hit(ctx, master, r, t, .03 * K * dg); tone(ctx, master, { t, d: .09, f: freq(58), w: 'triangle', g: .025 * K * dg, a: .003, rel: .06, cut: 700 }); }
+      if (S.h.includes(pos)) hit(ctx, master, r, t, .012 * K * dg);
+    }
+
+    tone(ctx, master, { t: 0, d: .65, f: freq(root + 24), g: .06 * K, a: .02, rel: .18 });
+    chord(0).forEach((m, j) => tone(ctx, master, { t: DUR - 1.8, d: 1.75, f: freq(m + 12), w: j === 0 ? 'sine' : 'triangle', g: .045 * K, p: (j - 1) * .35, a: .3, rel: .65, cut: 3200 }));
+
+    const rendered = await ctx.startRendering();
+    const blob = toWav(rendered);
+    if (url) URL.revokeObjectURL(url);
+    url = URL.createObjectURL(blob);
+    player.src = url; player.load();
+    lastBlob = blob; lastName = 'audio-maker-' + seed; $('dl').disabled = false;
+    $('status').textContent = 'Track ' + seed + ' · ' + bpm + ' BPM · ' + style + '. Press play.';
+  } catch (e) {
+    console.error(e);
+    $('status').textContent = 'Generation failed: ' + (e && e.message ? e.message : 'unknown error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+btn.onclick = generate;
+$('rnd').onclick = () => { $('seed').value = ri(Math.random, 100000, 999999); };
+$('dl').onclick = async () => {
+  if (!lastBlob) return;
+  try {
+    const dl = window.claude ? await window.claude.use('downloads') : null;
+    if (dl) {
+      // Hosted page: the viewer only accepts a limited set of types, so wrap the WAV in a zip.
+      const wav = new Uint8Array(await lastBlob.arrayBuffer());
+      await dl.save({ filename: lastName + '.zip', data: makeZip(lastName + '.wav', wav) });
+      $('status').textContent = 'Saved ' + lastName + '.zip (contains the WAV).';
+    } else {
+      const a = document.createElement('a');
+      a.href = url; a.download = lastName + '.wav';
+      document.body.appendChild(a); a.click(); a.remove();
+    }
+  } catch (e) {
+    if (!e || e.code !== 'declined') $('status').textContent = 'Download failed.';
+  }
+};
+})();
+</script>
+</body>
+  </html>
