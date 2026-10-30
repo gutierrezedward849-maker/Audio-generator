@@ -28,22 +28,23 @@ audio{width:100%;margin-top:4px}
 </head>
 <body><main>
 <h1>Audio Maker</h1>
-<p class="sub">Tung tung tung sahur will come for you if you dont generate.</p>
+<p class="sub">Generate a beat or tung tung tung sahur will come for you</p>
 <div class="panel">
  <div class="row">
   <div><label for="bpm">BPM</label><input id="bpm" type="number" inputmode="numeric" min="60" max="200" value="96"></div>
-  <div><label for="profile">Style</label>
-   <select id="profile">
-    <option value="temple">Temple</option>
-    <option value="cathedral">Cathedral</option>
-    <option value="arcade">Arcade</option>
-    <option value="cosmic">Cosmic</option>
+  <div><label for="len">Length (seconds)</label><input id="len" type="number" inputmode="numeric" min="5" max="180" value="30"></div>
+ </div>
+ <label for="profile">Genre</label>
+ <div style="margin-bottom:16px"><select id="profile">
+    <option value="temple">Electro</option>
+    <option value="cathedral">Darkwave</option>
+    <option value="arcade">Chiptune</option>
+    <option value="cosmic">Ambient</option>
     <option value="techno">Techno</option>
     <option value="synthwave">Synthwave</option>
     <option value="lofi">Lo-fi</option>
     <option value="breakbeat">Breakbeat</option>
    </select></div>
- </div>
  <label for="seed">Seed (leave empty for random)</label>
  <div class="seed"><input id="seed" type="number" inputmode="numeric" min="0" max="999999999" placeholder="Random"><button id="rnd" type="button">Random</button></div>
  <button id="gen">Generate track</button>
@@ -55,7 +56,7 @@ audio{width:100%;margin-top:4px}
 <script>
 (() => {
 'use strict';
-const DUR = 30, RATE = 44100, $ = id => document.getElementById(id);
+let DUR = 30; const RATE = 44100, $ = id => document.getElementById(id);
 const player = $('player'), btn = $('gen');
 let url = null, lastBlob = null, lastName = '';
 const scales = {
@@ -148,6 +149,8 @@ async function generate() {
     const r = rnd(seed);
     const bpm = Math.max(60, Math.min(200, Number($('bpm').value) || 96));
     $('bpm').value = bpm;
+    DUR = Math.max(5, Math.min(180, Math.round(Number($('len').value) || 30)));
+    $('len').value = DUR;
     const style = $('profile').value, S = P[style] || P.temple;
     const scale = scales[S.mode], L = scale.length, root = ri(r, 44, 52);
     const beat = 60 / bpm, bar = beat * 4, nBars = Math.ceil(DUR / bar), nBeats = Math.ceil(DUR / beat);
@@ -198,7 +201,7 @@ async function generate() {
     url = URL.createObjectURL(blob);
     player.src = url; player.load();
     lastBlob = blob; lastName = 'audio-maker-' + seed; $('dl').disabled = false;
-    $('status').textContent = 'Track ' + seed + ' · ' + bpm + ' BPM · ' + style + '. Press play.';
+    $('status').textContent = 'Track ' + seed + ' · ' + bpm + ' BPM · ' + DUR + 's · ' + $('profile').selectedOptions[0].text + '. Press play.';
   } catch (e) {
     console.error(e);
     $('status').textContent = 'Generation failed: ' + (e && e.message ? e.message : 'unknown error');
@@ -229,4 +232,4 @@ $('dl').onclick = async () => {
 })();
 </script>
 </body>
-  </html>
+</html>
